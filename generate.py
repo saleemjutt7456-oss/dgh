@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Find a trending gaming topic and turn it into an animated vertical news video (Short).
+"""Find a trending gaming topic and turn it into a fast, vertical news Short.
 
 Per video:
-  1. Pull fresh headlines per topic from Google News RSS (free, no key) and pick the
-     topic covered least recently.
-  2. Script: Gemini (free tier, GEMINI_API_KEY) writes title, description, tags and
-     scenes from those headlines only. Without a key, plain headline scenes are used.
-  3. Visuals: one AI illustration per scene (Pollinations, free, no key), animated with a
-     slow zoom/pan and a fading caption. Falls back to a gradient if an image fails.
-  4. Narration (edge-tts, falling back to gTTS), stitched with ffmpeg.
-  5. A thumbnail is saved and the mp4 + sidecar .json go to queue/ for upload.py.
+  1. Fresh headlines per topic from Google News RSS (free, no key); least-recent topic wins.
+  2. Gemini (free key) writes a punchy hook-first script from those headlines only.
+  3. Visuals: real stock footage per scene from Pexels (free key), cropped to vertical.
+     Fallback: an animated gradient.
+  4. Voice: Gemini speech (most natural free voice), else Microsoft neural voice, else gTTS.
+  5. Retention tricks: hook first, one short sentence per scene (a cut every ~4s), big
+     word-by-word captions, fades. Thumbnail from the first scene.
+  6. mp4 + thumbnail + sidecar .json go to queue/ for upload.py.
 
 Usage:
   python generate.py                 # make 1 video
   python generate.py --count 2
-  python generate.py --demo          # offline test: fake headlines, silent audio, no AI
+  python generate.py --demo          # offline test: fake headlines, test footage, silent audio
 """
 import argparse
 import asyncio
+import os
+import time
 import hashlib
 import json
 import random
@@ -217,23 +219,54 @@ def make_thumbnail(bg, title, path):
 def run(cmd):
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     if result.returncode:
-        raise RuntimeError(f"{cmd[0]} failed: {result.stderr[-400:]}")
+        raise RuntimeError(f"{cmd[0]} failed: {result.stderr[-500:]}")
 
 
-def narrate(text, out, voice, demo):
-    if demo:
-        run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
-             "-t", f"{max(3, len(text.split()) * 0.4):.1f}", "-c:a", "libmp3lame", str(out)])
-        return
-    try:
-        import edge_tts
-        asyncio.run(edge_tts.Communicate(text, voice).save(str(out)))
-        if Path(out).stat().st_size > 1000:
-            return
-    except Exception as err:
-        print(f"  edge-tts failed ({err}), falling back to gTTS")
+def silent_audio(text, out):
+    run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+         "-t", f"{max(3, len(text.split()) * 0.4):.1f}", str(out)])
+
+
+def edge_speech(text, out, config):
+    import edge_tts
+    voice = config.get("edgeVoice", "en-US-AndrewMultilingualNeural")
+    asyncio.run(edge_tts.Communicate(text, voice, rate="+6%").save(str(out)))
+    if Path(out).stat().st_size < 1000:
+        raise RuntimeError("empty edge-tts audio")
+
+
+def gtts_speech(text, out, config):
     from gtts import gTTS
     gTTS(text, lang="en").save(str(out))
+
+
+def narrate_all(scenes, tmp, config, demo):
+    """One consistent voice for the whole video: Gemini, else Edge, else gTTS."""
+    if demo:
+        outs = []
+        for i, s in enumerate(scenes):
+            out = tmp / f"{i}.wav"
+            silent_audio(s["narration"], out)
+            outs.append(out)
+        return outs
+    engines = []
+    if os.environ.get("GEMINI_API_KEY") and config.get("useGeminiVoice", True):
+        engines.append(("Gemini voice", lambda t, o, c: ai.gemini_speech(t, o, c), "wav"))
+    engines += [("Edge neural voice", edge_speech, "mp3"), ("gTTS", gtts_speech, "mp3")]
+    for name, fn, ext in engines:
+        outs = []
+        try:
+            for i, s in enumerate(scenes):
+                out = tmp / f"{i}_{name[:3]}.{ext}"
+                fn(s["narration"], out, config)
+                outs.append(out)
+                if name == "Gemini voice":
+                    time.sleep(config.get("geminiVoiceDelay", 6))  # stay inside free-tier rate limits
+            print(f"  voice: {name}")
+            return outs
+        except Exception as err:
+            print(f"  {name} failed: {err}")
+    raise RuntimeError("no voice engine worked")
 
 
 def duration(path):
@@ -242,28 +275,61 @@ def duration(path):
     return float(out.stdout.strip())
 
 
-def render_clip(bg_png, cap_png, mp3, out, index):
-    """Animate the still: slow zoom (in on even scenes, out on odd) plus fading caption."""
-    secs = duration(mp3) + 0.5
+def caption_filters(text, secs, tmp, idx):
+    """Big word-by-word captions: 2-3 words at a time, timed to the narration length."""
+    words = text.replace("\n", " ").split()
+    chunks, cur = [], []
+    for w in words:
+        if cur and (len(" ".join(cur + [w])) > 13 or len(cur) >= 3):
+            chunks.append(cur)
+            cur = []
+        cur.append(w)
+        if w.endswith((".", "!", "?")):
+            chunks.append(cur)
+            cur = []
+    if cur:
+        chunks.append(cur)
+    weights = [sum(len(w) + 2 for w in c) for c in chunks]
+    total = sum(weights) or 1
+    speech = max(secs - 0.5, 1)
+    filters, t0 = [], 0.1
+    for n, (chunk, wt) in enumerate(zip(chunks, weights)):
+        t1 = t0 + speech * wt / total
+        f = tmp / f"cap_{idx}_{n}.txt"
+        f.write_text(" ".join(chunk).upper(), encoding="utf-8")
+        filters.append(
+            f"drawtext=fontfile={FONT_BOLD}:textfile={f}:fontsize=66:fontcolor=white:"
+            f"borderw=7:bordercolor=black:x=(w-text_w)/2:y=h*0.60:"
+            f"enable='between(t,{t0:.2f},{t1:.2f})'")
+        t0 = t1
+    return filters
+
+
+def render_clip(source, is_video, text, audio, out, index, tmp, label=""):
+    """One scene: footage (or animated gradient) + captions + fades + narration."""
+    secs = duration(audio) + 0.45
     frames = int(secs * FPS)
-    if index % 2 == 0:
-        zoom = f"min(1+0.0007*on,1.25)"
+    if is_video:
+        base = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+                f"fps={FPS},eq=brightness=-0.06:saturation=1.15")
+        inputs = ["-stream_loop", "-1", "-i", str(source)]
     else:
-        zoom = f"max(1.25-0.0007*on,1.0)"
-    pan = ["iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"]
-    graph = (
-        f"[0:v]zoompan=z='{zoom}':x='{pan[0]}':y='{pan[1]}':d={frames}:s={W}x{H}:fps={FPS},"
-        f"format=yuv420p[bg];"
-        f"[1:v]format=rgba,fade=t=in:st=0.3:d=0.6:alpha=1[cap];"
-        f"[bg][cap]overlay=0:0:format=auto,fade=t=in:st=0:d=0.25,"
-        f"fade=t=out:st={secs - 0.25:.2f}:d=0.25,format=yuv420p[v]"
-    )
-    run(["ffmpeg", "-y", "-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.2f}", "-i", str(bg_png),
-         "-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.2f}", "-i", str(cap_png),
-         "-i", str(mp3), "-filter_complex", graph, "-map", "[v]", "-map", "2:a",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-r", str(FPS),
+        zoom = "min(1+0.0007*on,1.25)" if index % 2 == 0 else "max(1.25-0.0007*on,1.0)"
+        base = (f"[0:v]zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"d={frames}:s={W}x{H}:fps={FPS}")
+        inputs = ["-loop", "1", "-framerate", str(FPS), "-i", str(source)]
+    chain = [base, f"drawbox=x=0:y=ih*0.54:w=iw:h=ih*0.20:color=black@0.35:t=fill"]
+    if label:
+        chain.append(f"drawtext=fontfile={FONT_BOLD}:text='{label}':fontsize=34:fontcolor=#ffd60a:"
+                     f"borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.08")
+    chain += caption_filters(text, secs, tmp, index)
+    chain += [f"fade=t=in:st=0:d=0.15", f"fade=t=out:st={secs - 0.15:.2f}:d=0.15", "format=yuv420p[v]"]
+    graph = ",".join(chain)
+    run(["ffmpeg", "-y", *inputs, "-i", str(audio), "-filter_complex", graph,
+         "-map", "[v]", "-map", "1:a", "-t", f"{secs:.2f}",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-r", str(FPS),
          "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
-         "-af", "apad=pad_dur=0.5", "-t", f"{secs:.2f}", str(out)])
+         "-af", "apad=pad_dur=0.5", str(out)])
 
 
 def concat(clips, out, workdir):
@@ -273,19 +339,24 @@ def concat(clips, out, workdir):
          "-c", "copy", "-movflags", "+faststart", str(out)])
 
 
+def demo_footage(dest, index):
+    """Stand-in for stock footage so the video path can be tested offline."""
+    run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc2=size=720x1280:rate=24,hue=h={index * 50}",
+         "-t", "8", "-pix_fmt", "yuv420p", str(dest)])
+
+
+def frame_of(video, dest):
+    run(["ffmpeg", "-y", "-ss", "1", "-i", str(video), "-frames:v", "1", str(dest)])
+    return Image.open(dest).convert("RGB")
+
+
 # --------------------------------------------------------------------------- scenes
-def plain_scenes(name, headlines, today, channel):
-    n = len(headlines)
-    scenes = [{"caption": f"{name} news: top {n} updates",
-               "narration": f"{name} news. Top {n} updates right now.",
-               "image_prompt": f"{name} video game world, epic wide shot"}]
+def plain_scenes(name, headlines):
+    scenes = [{"narration": f"{name} news. Here are the top {len(headlines)} stories right now.",
+               "search_query": "video game controller"}]
     for i, h in enumerate(headlines, 1):
-        scenes.append({"caption": h["title"],
-                       "narration": f"Number {i}. {h['title']}. Reported by {h['source']}.",
-                       "image_prompt": f"{name} video game scene inspired by: {h['title']}"})
-    scenes.append({"caption": "Follow for daily gaming news",
-                   "narration": "That is all for now. Follow for new gaming news every day.",
-                   "image_prompt": f"{name} gamer silhouette watching a glowing screen"})
+        scenes.append({"narration": f"Number {i}. {h['title']}.", "search_query": f"{name} gaming"})
+    scenes.append({"narration": "Follow for new gaming news every day.", "search_query": "gamer headset"})
     return scenes
 
 
@@ -293,17 +364,11 @@ def build_video(topic, headlines, config, demo):
     name = topic["name"]
     today = datetime.now(timezone.utc).strftime("%d %b %Y")
     palette = random.choice(PALETTES)
-    voice = config.get("voice", "en-US-GuyNeural")
-    style = config.get("imageStyle", STYLE_DEFAULT)
     channel = config.get("channelName", "")
 
     script = None if demo else ai.write_script(topic, headlines, config)
-    if script:
-        print("  script written by Gemini")
-        scenes = script["scenes"]
-    else:
-        print("  using plain headline scenes (no AI script)")
-        scenes = plain_scenes(name, headlines, today, channel)
+    scenes = script["scenes"] if script else plain_scenes(name, headlines)
+    print("  script: Gemini" if script else "  script: plain headlines (Gemini unavailable)")
 
     QUEUE.mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -311,28 +376,28 @@ def build_video(topic, headlines, config, demo):
     out = QUEUE / f"{stamp}-{slug}-news.mp4"
     thumb = out.with_suffix(".jpg")
 
-    ai_images = 0
+    footage_count, used = 0, set()
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
+        voices = narrate_all(scenes, tmp, config, demo)
         clips, first_bg = [], None
         for idx, scene in enumerate(scenes):
-            bg_png, cap_png, mp3, clip = (tmp / f"{idx}_bg.png", tmp / f"{idx}_cap.png",
-                                          tmp / f"{idx}.mp3", tmp / f"{idx}.mp4")
-            img = None
-            if not demo:
-                img = ai.make_image(scene.get("image_prompt") or f"{name} video game", (SRC_W, SRC_H),
-                                    style, seed=random.randint(1, 10**6))
-            if img:
-                ai_images += 1
-                img = cover(img, (SRC_W, SRC_H))
+            src, is_video = tmp / f"{idx}_src.mp4", True
+            if demo:
+                demo_footage(src, idx)
+            elif not ai.pexels_clip(scene.get("search_query") or f"{name} gaming", src, used):
+                if not ai.pexels_clip(config.get("fallbackQuery", "video game neon"), src, used):
+                    is_video = False
+            if is_video:
+                footage_count += 1
             else:
-                img = gradient(palette, (SRC_W, SRC_H)).filter(ImageFilter.GaussianBlur(2))
-            img.save(bg_png)
+                src = tmp / f"{idx}_bg.png"
+                gradient(palette, (SRC_W, SRC_H)).filter(ImageFilter.GaussianBlur(2)).save(src)
             if first_bg is None:
-                first_bg = img
-            caption_layer(scene["caption"][:110], channel if idx == len(scenes) - 1 else "").save(cap_png)
-            narrate(scene["narration"], mp3, voice, demo)
-            render_clip(bg_png, cap_png, mp3, clip, idx)
+                first_bg = frame_of(src, tmp / "first.png") if is_video else Image.open(src)
+            clip = tmp / f"{idx}.mp4"
+            label = f"{name} NEWS" if idx == 0 else ""
+            render_clip(src, is_video, scene["narration"], voices[idx], clip, idx, tmp, label)
             clips.append(clip)
         concat(clips, out, tmp)
 
@@ -340,13 +405,13 @@ def build_video(topic, headlines, config, demo):
         title = (title if len(title) <= 88 else title[:85].rstrip() + "...") + " #Shorts"
         make_thumbnail(first_bg, (script or {}).get("title") or f"{name} news", thumb)
 
-    print(f"  {ai_images}/{len(scenes)} AI images")
+    print(f"  {footage_count}/{len(scenes)} scenes with stock footage")
     sources = "\n".join(f"- {h['title']} ({h['source']}): {h['link']}" for h in headlines)
     summary = (script or {}).get("description") or f"{name} news roundup for {today}."
     hashtag = re.sub(r"\W+", "", name)
     description = (f"{summary}\n\nSources:\n{sources}\n\n"
-                   "Headlines come from Google News. Visuals are AI-generated illustrations and "
-                   "this video is not affiliated with any game publisher.\n\n"
+                   "Headlines come from Google News. Footage is stock video (Pexels) and this video is "
+                   "not affiliated with any game publisher.\n\n"
                    f"#{hashtag} #gamingnews #shorts")
     tags = list(dict.fromkeys((script or {}).get("tags", []) + topic.get("tags", [])
                               + [name, "gaming news", "shorts", "gaming"]))

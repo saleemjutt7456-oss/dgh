@@ -9,7 +9,6 @@
   ],
   "descriptionTemplate": "{title}\n\nOriginal gameplay footage.\n\n{hashtags}\n",
   "channelName": "Daily Gaming News",
-  "voice": "en-US-GuyNeural",
   "headlinesPerVideo": 4,
   "topics": [
     {
@@ -63,10 +62,16 @@
       ]
     }
   ],
-  "scenes": 5,
+  "scenes": 6,
   "geminiModels": [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash"
+    "gemini-2.5-flash"
   ],
-  "imageStyle": "cinematic digital illustration, dramatic lighting, vibrant colors, detailed, vertical composition, no text, no watermark"
+  "geminiVoice": "Puck",
+  "useGeminiVoice": true,
+  "geminiVoiceDelay": 6,
+  "edgeVoice": "en-US-AndrewMultilingualNeural",
+  "fallbackQuery": "video game neon",
+  "geminiTtsModels": [
+    "gemini-2.5-flash-preview-tts"
+  ]
 }
