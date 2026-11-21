@@ -1,0 +1,49 @@
+name: Upload to YouTube
+
+on:
+  schedule:
+    - cron: "0 12 * * *"   # every day at 12:00 UTC (17:00 Pakistan time)
+  workflow_dispatch:
+    inputs:
+      max_uploads:
+        description: "Videos to upload in this run"
+        default: "1"
+      dry_run:
+        description: "Dry run (1 = do not upload)"
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: youtube-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Upload queued videos
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          MAX_UPLOADS: ${{ github.event.inputs.max_uploads || '1' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: python upload.py
+
+      - name: Commit upload records
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A queue uploaded
+          git diff --cached --quiet || git commit -m "Record YouTube uploads" && git push

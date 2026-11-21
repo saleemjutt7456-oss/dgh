@@ -1,0 +1,7 @@
+{
+  "title": "GTA 5 Insane Police Chase",
+  "description": "Optional. Leave out to use the template in config.json.",
+  "tags": ["gta5", "police chase"],
+  "privacyStatus": "private",
+  "categoryId": "20"
+}
