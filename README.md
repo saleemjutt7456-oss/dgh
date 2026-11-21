@@ -56,10 +56,12 @@ step. It costs nothing and needs no billing details.
 
 ## Things to know
 
-- **Private by default.** YouTube forces videos uploaded through an unaudited API
-  project to be private. Uploads still work; you switch each video to Public in
-  YouTube Studio, or apply for a YouTube API compliance audit to lift this.
-  `config.json` keeps `privacyStatus` at `private` for that reason.
+- **Videos stay private (YouTube rule).** Uploads from an API project that has not passed
+  YouTube's API compliance audit are locked to private, and the channel owner cannot change
+  that in Studio (https://support.google.com/youtube/answer/7300965). To publish
+  automatically, the project must pass the audit: https://support.google.com/youtube/contact/yt_api_form
+  (free, but approval is not guaranteed for personal tools). Until then, the videos are made and
+  uploaded automatically but must be re-uploaded by hand from the YouTube app to go public.
 - **Quota.** Each upload costs 1,600 of the free 10,000 daily units, so 2 a day is fine.
 - **Original value.** The videos are news summaries with source links. YouTube can
   limit channels that post mass-produced, repetitive content, so check the first

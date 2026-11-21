@@ -322,7 +322,11 @@ def transcribe(path):
         from faster_whisper import WhisperModel
         if _WHISPER is None:
             _WHISPER = WhisperModel("tiny.en", device="cpu", compute_type="int8")
-        segments, _ = _WHISPER.transcribe(str(path), language="en", word_timestamps=True, beam_size=1)
+        import numpy as np
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1",
+                              "-ar", "16000", "-"], capture_output=True, check=True).stdout
+        audio = np.frombuffer(raw, dtype=np.float32)  # decoded by ffmpeg, so PyAV is not needed
+        segments, _ = _WHISPER.transcribe(audio, language="en", word_timestamps=True, beam_size=1)
         return [(w.word.strip(), w.start, w.end) for seg in segments for w in seg.words]
     except Exception as err:
         print(f"  speech check unavailable: {err}")
