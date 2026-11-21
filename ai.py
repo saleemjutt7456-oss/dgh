@@ -99,8 +99,10 @@ Return JSON with:
 def gemini_speech(text, out_path, config):
     """Natural-sounding speech from Gemini's free TTS. Writes a wav file; raises on failure."""
     voice = config.get("geminiVoice", "Puck")
-    styled = ("Say this like an energetic, friendly gaming YouTuber, natural pacing, "
-              "with real emotion and small pauses: " + text)
+    # Speak the exact text. A style instruction placed in front can be read aloud by newer
+    # TTS models, so it is only used if geminiVoiceStyle is set in config.json.
+    style = (config.get("geminiVoiceStyle") or "").strip()
+    styled = f"{style}: {text}" if style else text
     payload = {"contents": [{"parts": [{"text": styled}]}],
                "generationConfig": {"responseModalities": ["AUDIO"],
                                     "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}

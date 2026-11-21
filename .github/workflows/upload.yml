@@ -45,6 +45,17 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python generate.py --count "${{ github.event.inputs.count || '1' }}"
 
+      - name: Keep generated video for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-video
+          path: |
+            queue/*.mp4
+            queue/*.jpg
+          retention-days: 3
+          if-no-files-found: ignore
+
       - name: Upload to YouTube
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}

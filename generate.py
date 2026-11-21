@@ -311,32 +311,77 @@ def gtts_speech(text, out, config):
     gTTS(text, lang="en").save(str(out))
 
 
+_WHISPER = None
+
+
+def transcribe(path):
+    """Word timings of what is actually spoken, via faster-whisper (free, local).
+    Returns [(word, start, end), ...] or None if unavailable."""
+    global _WHISPER
+    try:
+        from faster_whisper import WhisperModel
+        if _WHISPER is None:
+            _WHISPER = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+        segments, _ = _WHISPER.transcribe(str(path), language="en", word_timestamps=True, beam_size=1)
+        return [(w.word.strip(), w.start, w.end) for seg in segments for w in seg.words]
+    except Exception as err:
+        print(f"  speech check unavailable: {err}")
+        return None
+
+
+def trim_audio(src, dst):
+    """Cut silence from the start and end of a voice clip."""
+    cut = "silenceremove=start_periods=1:start_threshold=-45dB"
+    run(["ffmpeg", "-y", "-i", str(src), "-af", f"{cut},areverse,{cut},areverse",
+         "-ar", "24000", "-ac", "1", str(dst)])
+
+
+def words_of(text):
+    return re.findall(r"[A-Za-z0-9']+", text.lower())
+
+
 def narrate_all(scenes, tmp, config, demo):
-    """One consistent voice for the whole video: Gemini, else Edge, else gTTS."""
+    """One consistent voice for the whole video: Gemini, else Edge, else gTTS.
+
+    Each clip is trimmed and checked with speech recognition: if the voice says clearly more or
+    fewer words than the script (e.g. reads an instruction aloud or repeats itself) that engine
+    is rejected and the next one is used. Returns [(audio_path, (speech_start, speech_end))].
+    """
     if demo:
         outs = []
         for i, s in enumerate(scenes):
             out = tmp / f"{i}.wav"
             silent_audio(s["narration"], out)
-            outs.append(out)
+            outs.append((out, None))
         return outs
     engines = []
     if os.environ.get("GEMINI_API_KEY") and config.get("useGeminiVoice", True):
         engines.append(("Gemini voice", lambda t, o, c: ai.gemini_speech(t, o, c), "wav"))
     engines += [("Edge neural voice", edge_speech, "mp3"), ("gTTS", gtts_speech, "mp3")]
-    for name, fn, ext in engines:
+    for position, (name, fn, ext) in enumerate(engines):
+        last_engine = position == len(engines) - 1
         outs = []
         try:
             for i, s in enumerate(scenes):
-                out = tmp / f"{i}_{name[:3]}.{ext}"
-                fn(s["narration"], out, config)
-                outs.append(out)
+                raw, clean = tmp / f"{i}_{name[:3]}_raw.{ext}", tmp / f"{i}_{name[:3]}.wav"
+                fn(s["narration"], raw, config)
+                trim_audio(raw, clean)
+                heard = transcribe(clean)
+                span = None
+                if heard:
+                    want, got = len(words_of(s["narration"])), len(heard)
+                    print(f"  scene {i + 1}: script {want} words, heard {got}: "
+                          f"{' '.join(w for w, _, _ in heard)[:90]}")
+                    if not last_engine and not (0.7 <= got / max(want, 1) <= 1.35):
+                        raise RuntimeError(f"voice said {got} words but script has {want}")
+                    span = (heard[0][1], heard[-1][2])
+                outs.append((clean, span))
                 if name == "Gemini voice":
                     time.sleep(config.get("geminiVoiceDelay", 6))  # stay inside free-tier rate limits
             print(f"  voice: {name}")
             return outs
         except Exception as err:
-            print(f"  {name} failed: {err}")
+            print(f"  {name} rejected: {err}")
     raise RuntimeError("no voice engine worked")
 
 
@@ -346,7 +391,7 @@ def duration(path):
     return float(out.stdout.strip())
 
 
-def caption_filters(text, secs, tmp, idx):
+def caption_filters(text, secs, tmp, idx, span=None):
     """Big word-by-word captions: 2-3 words at a time, timed to the narration length."""
     words = text.replace("\n", " ").split()
     chunks, cur = [], []
@@ -362,8 +407,9 @@ def caption_filters(text, secs, tmp, idx):
         chunks.append(cur)
     weights = [sum(len(w) + 2 for w in c) for c in chunks]
     total = sum(weights) or 1
-    speech = max(secs - 0.5, 1)
-    filters, t0 = [], 0.1
+    start, end = span if span else (0.1, max(secs - 0.45, 1))
+    speech = max(end - start, 0.5)
+    filters, t0 = [], start
     for n, (chunk, wt) in enumerate(zip(chunks, weights)):
         t1 = t0 + speech * wt / total
         f = tmp / f"cap_{idx}_{n}.txt"
@@ -376,7 +422,7 @@ def caption_filters(text, secs, tmp, idx):
     return filters
 
 
-def render_clip(source, is_video, text, audio, out, index, tmp, label=""):
+def render_clip(source, is_video, text, audio, out, index, tmp, label="", span=None):
     """One scene: footage (or animated gradient) + captions + fades + narration."""
     secs = duration(audio) + 0.45
     frames = int(secs * FPS)
@@ -393,7 +439,7 @@ def render_clip(source, is_video, text, audio, out, index, tmp, label=""):
     if label:
         chain.append(f"drawtext=fontfile={FONT_BOLD}:text='{label}':fontsize=34:fontcolor=#ffd60a:"
                      f"borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.08")
-    chain += caption_filters(text, secs, tmp, index)
+    chain += caption_filters(text, secs, tmp, index, span)
     chain += [f"fade=t=in:st=0:d=0.15", f"fade=t=out:st={secs - 0.15:.2f}:d=0.15", "format=yuv420p[v]"]
     graph = ",".join(chain)
     run(["ffmpeg", "-y", *inputs, "-i", str(audio), "-filter_complex", graph,
@@ -468,7 +514,8 @@ def build_video(topic, headlines, config, demo):
                 first_bg = frame_of(src, tmp / "first.png") if is_video else Image.open(src)
             clip = tmp / f"{idx}.mp4"
             label = f"{name} NEWS" if idx == 0 else ""
-            render_clip(src, is_video, scene["narration"], voices[idx], clip, idx, tmp, label)
+            audio, span = voices[idx]
+            render_clip(src, is_video, scene["narration"], audio, clip, idx, tmp, label, span)
             clips.append(clip)
         concat(clips, out, tmp)
 
