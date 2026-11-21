@@ -1,7 +1,7 @@
-"""Free helpers: Gemini (script + natural voice, free tier) and Pexels (free stock footage).
+"""Free helpers: Gemini (script + natural voice, free tier) and free stock footage (Pixabay/Pexels).
 
 Everything is optional and degrades gracefully; see generate.py for the fallbacks.
-Keys come from environment variables (GitHub secrets): GEMINI_API_KEY, PEXELS_API_KEY.
+Keys come from environment variables (GitHub secrets): GEMINI_API_KEY, PIXABAY_API_KEY (or PEXELS_API_KEY).
 """
 import base64
 import json
@@ -154,3 +154,35 @@ def pexels_clip(query, dest, used, min_h=1280):
     except Exception as err:
         print(f"  Pexels '{query}' failed: {err}")
     return None
+
+
+def pixabay_clip(query, dest, used):
+    """Download a stock video from Pixabay (free key, no card). Landscape clips are cropped
+    to vertical later. Returns path or None."""
+    key = os.environ.get("PIXABAY_API_KEY")
+    if not key:
+        return None
+    try:
+        url = "https://pixabay.com/api/videos/?" + urllib.parse.urlencode(
+            {"key": key, "q": query[:100], "per_page": 30, "safesearch": "true", "order": "popular"})
+        hits = _request(url, headers={"User-Agent": "Mozilla/5.0"}).get("hits", [])
+        for hit in hits:
+            if hit["id"] in used or hit.get("duration", 0) < 4:
+                continue
+            rendition = next((hit["videos"][k] for k in ("medium", "small", "tiny")
+                              if hit["videos"].get(k, {}).get("url")), None)
+            if not rendition:
+                continue
+            req = urllib.request.Request(rendition["url"], headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=180) as resp, open(dest, "wb") as fh:
+                fh.write(resp.read())
+            used.add(hit["id"])
+            return dest
+    except Exception as err:
+        print(f"  Pixabay '{query}' failed: {err}")
+    return None
+
+
+def stock_clip(query, dest, used):
+    """Try Pixabay, then Pexels, whichever keys exist."""
+    return pixabay_clip(query, dest, used) or pexels_clip(query, dest, used)

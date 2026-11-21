@@ -4,7 +4,7 @@
 Per video:
   1. Fresh headlines per topic from Google News RSS (free, no key); least-recent topic wins.
   2. Gemini (free key) writes a punchy hook-first script from those headlines only.
-  3. Visuals: real stock footage per scene from Pexels (free key), cropped to vertical.
+  3. Visuals: real stock footage per scene from Pixabay or Pexels (free key), cropped to vertical.
      Fallback: an animated gradient.
   4. Voice: Gemini speech (most natural free voice), else Microsoft neural voice, else gTTS.
   5. Retention tricks: hook first, one short sentence per scene (a cut every ~4s), big
@@ -385,8 +385,8 @@ def build_video(topic, headlines, config, demo):
             src, is_video = tmp / f"{idx}_src.mp4", True
             if demo:
                 demo_footage(src, idx)
-            elif not ai.pexels_clip(scene.get("search_query") or f"{name} gaming", src, used):
-                if not ai.pexels_clip(config.get("fallbackQuery", "video game neon"), src, used):
+            elif not ai.stock_clip(scene.get("search_query") or f"{name} gaming", src, used):
+                if not ai.stock_clip(config.get("fallbackQuery", "video game neon"), src, used):
                     is_video = False
             if is_video:
                 footage_count += 1
@@ -410,7 +410,7 @@ def build_video(topic, headlines, config, demo):
     summary = (script or {}).get("description") or f"{name} news roundup for {today}."
     hashtag = re.sub(r"\W+", "", name)
     description = (f"{summary}\n\nSources:\n{sources}\n\n"
-                   "Headlines come from Google News. Footage is stock video (Pexels) and this video is "
+                   "Headlines come from Google News. Footage is free stock video (Pixabay/Pexels) and this video is "
                    "not affiliated with any game publisher.\n\n"
                    f"#{hashtag} #gamingnews #shorts")
     tags = list(dict.fromkeys((script or {}).get("tags", []) + topic.get("tags", [])

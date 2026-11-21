@@ -6,7 +6,7 @@ Free and fully automatic. Twice a day GitHub Actions runs this pipeline:
    covered least recently.
 2. **Script:** Gemini writes a hook-first script (one short sentence per scene, a cut about
    every 4 seconds) using only facts from the headlines.
-3. **Visuals:** real stock footage per scene from Pexels (free key), cropped to vertical.
+3. **Visuals:** real stock footage per scene from Pixabay (free key) or Pexels, cropped to vertical.
 4. **Voice:** Gemini's free speech voice (the most natural free option), falling back to a
    Microsoft neural voice, then Google TTS. One voice per video.
 5. **Retention:** big word-by-word captions, fades, honest curiosity titles, thumbnail.
@@ -23,8 +23,10 @@ Add each as a secret in **Settings > Secrets and variables > Actions**. Never pa
 into chat, code or issues.
 
 - `GEMINI_API_KEY`: https://aistudio.google.com/apikey (script and natural voice)
-- `PEXELS_API_KEY`: https://www.pexels.com/api/ (real stock footage; without it videos fall
+- `PIXABAY_API_KEY`: sign up at https://pixabay.com, then open https://pixabay.com/api/docs/
+  and copy your key from the page (real stock footage; without any footage key videos fall
   back to plain gradient backgrounds)
+- `PEXELS_API_KEY`: optional alternative (Pexels has paused new keys for now)
 
 Check the first run's log in the Actions tab: it prints which script, voice and footage
 source were used.
