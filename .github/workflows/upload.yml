@@ -1,15 +1,17 @@
-name: Upload to YouTube
+name: Daily gaming videos
 
+# Two runs a day: each one finds a topic, makes a video and uploads it.
 on:
   schedule:
-    - cron: "0 12 * * *"   # every day at 12:00 UTC (17:00 Pakistan time)
+    - cron: "0 6 * * *"    # 11:00 Pakistan time
+    - cron: "0 14 * * *"   # 19:00 Pakistan time
   workflow_dispatch:
     inputs:
-      max_uploads:
-        description: "Videos to upload in this run"
+      count:
+        description: "Videos to create and upload in this run"
         default: "1"
       dry_run:
-        description: "Dry run (1 = do not upload)"
+        description: "1 = create videos but do not upload"
         default: "0"
 
 permissions:
@@ -20,8 +22,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  upload:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -32,18 +35,25 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Upload queued videos
+      - name: Find topic and create video
+        run: python generate.py --count "${{ github.event.inputs.count || '1' }}"
+
+      - name: Upload to YouTube
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          MAX_UPLOADS: ${{ github.event.inputs.max_uploads || '1' }}
+          MAX_UPLOADS: ${{ github.event.inputs.count || '1' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
         run: python upload.py
 
-      - name: Commit upload records
+      - name: Save history
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A queue uploaded
-          git diff --cached --quiet || git commit -m "Record YouTube uploads" && git push
+          git add -A data uploaded queue
+          if ! git diff --cached --quiet; then
+            git commit -m "Update upload history"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi

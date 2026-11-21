@@ -3,5 +3,16 @@
   "categoryId": "20",
   "madeForKids": false,
   "defaultTags": ["gta", "gaming", "gameplay"],
-  "descriptionTemplate": "{title}\n\nOriginal gameplay footage.\n\n{hashtags}\n"
+  "descriptionTemplate": "{title}\n\nOriginal gameplay footage.\n\n{hashtags}\n",
+  "channelName": "Daily Gaming News",
+  "voice": "en-US-GuyNeural",
+  "headlinesPerVideo": 4,
+  "topics": [
+    {"name": "GTA 6", "query": "\"GTA 6\"", "tags": ["gta 6", "gta6", "rockstar games"]},
+    {"name": "GTA Online", "query": "\"GTA Online\"", "tags": ["gta online", "gta 5", "rockstar games"]},
+    {"name": "Fortnite", "query": "Fortnite", "tags": ["fortnite", "epic games"]},
+    {"name": "Minecraft", "query": "Minecraft", "tags": ["minecraft", "mojang"]},
+    {"name": "Call of Duty", "query": "\"Call of Duty\"", "tags": ["call of duty", "cod"]},
+    {"name": "PS5", "query": "PS5 games", "tags": ["ps5", "playstation"]}
+  ]
 }

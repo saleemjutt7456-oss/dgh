@@ -1,19 +1,21 @@
-# dgh: YouTube gaming upload automation
+# dgh: automatic gaming news videos for YouTube
 
-Free, hands-off uploader for a gaming channel (GTA and other games).
-GitHub Actions runs `upload.py` on a schedule, uploads the next video in `queue/`
-to YouTube, then records it in `uploaded/`. No paid services are involved.
+Free and fully automatic. Twice a day GitHub Actions runs this pipeline:
 
-## How it works
+1. `generate.py` reads fresh headlines from Google News (no API key) for the topics in
+   `config.json` (GTA 6, GTA Online, Fortnite, Minecraft, Call of Duty, PS5), picks the
+   topic covered least recently, and builds a vertical 1080x1920 Short: title slide,
+   one narrated slide per headline, outro. Narration uses free Microsoft Edge voices
+   (falls back to Google TTS).
+2. `upload.py` uploads it to YouTube with title, tags and a description that lists the
+   sources, then records it in `uploaded/`.
+3. Used headlines are saved in `data/used.json` so nothing repeats.
 
-1. Put a video in `queue/` (for example `gta5_police_chase.mp4`).
-2. Optionally add `gta5_police_chase.json` next to it with a title, description
-   and tags (see `queue/example.json.sample`). Without it, the title comes from
-   the file name and the description from `config.json`.
-3. Every day at 12:00 UTC the workflow uploads one video. You can also run it by
-   hand from the **Actions** tab, choosing how many videos to upload or a dry run.
-4. After a successful upload the video is removed from the queue and a record
-   with the YouTube link is saved in `uploaded/`.
+Schedule: 06:00 and 14:00 UTC (11:00 and 19:00 Pakistan time) = 2 videos a day.
+Run it by hand any time from the **Actions** tab. Edit topics, voice and channel name
+in `config.json`. You can also drop your own recorded clips in `queue/`; they upload too.
+
+Test locally without internet: `python generate.py --demo`.
 
 ## One-time setup (free, about 10 minutes)
 
@@ -44,17 +46,17 @@ step. It costs nothing and needs no billing details.
   project to be private. Uploads still work; you switch each video to Public in
   YouTube Studio, or apply for a YouTube API compliance audit to lift this.
   `config.json` keeps `privacyStatus` at `private` for that reason.
-- **Quota.** The free quota allows about 6 uploads a day. Keep `MAX_UPLOADS` low.
-- **File size.** GitHub rejects single files over 100 MB, so this setup suits
-  short clips and Shorts. Longer videos need a different source for the files.
-- **Your own content only.** Upload footage you recorded yourself. Check
-  Rockstar's and each publisher's gameplay-video policy, and avoid copyrighted
-  music, because Content ID claims can block or demonetise videos.
+- **Quota.** Each upload costs 1,600 of the free 10,000 daily units, so 2 a day is fine.
+- **Original value.** The videos are news summaries with source links. YouTube can
+  limit channels that post mass-produced, repetitive content, so check the first
+  videos, vary the topics, and consider adding your own commentary or gameplay.
+- **Gameplay clips** you add yourself should be your own footage; avoid copyrighted music.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
+| `generate.py` | Finds topics and builds the videos |
 | `upload.py` | Uploads queued videos |
 | `get_token.py` | Run once locally to get the refresh token |
 | `config.json` | Default privacy, category, tags, description template |
