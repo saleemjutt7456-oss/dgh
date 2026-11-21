@@ -2,20 +2,27 @@
 
 Free and fully automatic. Twice a day GitHub Actions runs this pipeline:
 
-1. `generate.py` reads fresh headlines from Google News (no API key) for the topics in
-   `config.json` (GTA 6, GTA Online, Fortnite, Minecraft, Call of Duty, PS5), picks the
-   topic covered least recently, and builds a vertical 1080x1920 Short: title slide,
-   one narrated slide per headline, outro. Narration uses free Microsoft Edge voices
-   (falls back to Google TTS).
-2. `upload.py` uploads it to YouTube with title, tags and a description that lists the
-   sources, then records it in `uploaded/`.
-3. Used headlines are saved in `data/used.json` so nothing repeats.
+1. **Ideas:** `generate.py` reads fresh Google News headlines (no key) for the topics in
+   `config.json` and picks the topic covered least recently.
+2. **Script:** Google Gemini (free tier, no card) writes the title, description, tags and
+   5 scenes using only facts from those headlines. Without a key it falls back to plain
+   headline scenes.
+3. **Animation:** each scene gets an AI illustration from Pollinations (free, no key),
+   animated with a slow zoom and a fading caption, narrated with free Edge voices.
+4. **Thumbnail:** made from the first scene plus the title.
+5. **Upload:** `upload.py` uploads the video, sets the thumbnail (if the channel is
+   phone-verified) and saves a record in `uploaded/`. Used headlines go in
+   `data/used.json` so nothing repeats.
 
 Schedule: 06:00 and 14:00 UTC (11:00 and 19:00 Pakistan time) = 2 videos a day.
-Run it by hand any time from the **Actions** tab. Edit topics, voice and channel name
-in `config.json`. You can also drop your own recorded clips in `queue/`; they upload too.
+Run it by hand from the **Actions** tab. Edit topics, voice and style in `config.json`.
+Your own clips dropped in `queue/` upload too. Offline test: `python generate.py --demo`.
 
-Test locally without internet: `python generate.py --demo`.
+## Free Gemini key (for AI scripts)
+
+1. Open https://aistudio.google.com/apikey, sign in, click **Create API key** (no card).
+2. In the repo go to **Settings > Secrets and variables > Actions** and add a secret named
+   `GEMINI_API_KEY`. Never paste the key into chat, code or an issue.
 
 ## One-time setup (free, about 10 minutes)
 
@@ -57,6 +64,7 @@ step. It costs nothing and needs no billing details.
 | File | Purpose |
 | --- | --- |
 | `generate.py` | Finds topics and builds the videos |
+| `ai.py` | Gemini script writer and AI image download |
 | `upload.py` | Uploads queued videos |
 | `get_token.py` | Run once locally to get the refresh token |
 | `config.json` | Default privacy, category, tags, description template |

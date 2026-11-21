@@ -28,7 +28,7 @@ QUEUE = ROOT / "queue"
 DONE = ROOT / "uploaded"
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 TOKEN_URI = "https://oauth2.googleapis.com/token"
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]  # also covers thumbnails.set
 RETRY_STATUS = {500, 502, 503, 504}
 
 
@@ -155,11 +155,21 @@ def main():
             if "quotaExceeded" in str(err):
                 break
             continue
+        thumb = video.with_suffix(".jpg")
+        thumb_set = False
+        if thumb.exists():
+            try:
+                from googleapiclient.http import MediaFileUpload
+                service.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(thumb))).execute()
+                thumb_set = True
+            except Exception as err:  # needs a phone-verified channel; not fatal
+                print(f"  thumbnail not set: {err}")
         record = dict(meta, videoId=video_id, url=f"https://youtu.be/{video_id}",
-                      uploadedAt=datetime.now(timezone.utc).isoformat())
+                      thumbnailSet=thumb_set, uploadedAt=datetime.now(timezone.utc).isoformat())
         (DONE / f"{video.stem}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
         video.unlink()
         video.with_suffix(".json").unlink(missing_ok=True)
+        thumb.unlink(missing_ok=True)
         uploaded += 1
         print(f"  done: {record['url']}")
     print(f"Uploaded {uploaded} video(s).")
