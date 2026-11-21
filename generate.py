@@ -78,29 +78,100 @@ def key(title):
     return hashlib.sha1(re.sub(r"\W+", "", title.lower()).encode()).hexdigest()[:16]
 
 
-def fetch_headlines(query, days=2):
-    url = "https://news.google.com/rss/search?" + urllib.parse.urlencode(
-        {"q": f"{query} when:{days}d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        root = ET.fromstring(resp.read())
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
+      "Accept": "application/rss+xml, application/xml, text/xml, */*"}
+SITE_FEEDS = ["https://www.gamespot.com/feeds/news/", "https://www.pcgamer.com/rss/"]
+
+
+def http_get(url, tries=3):
+    last = None
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as resp:
+                return resp.read()
+        except Exception as err:
+            last = err
+            time.sleep(4 * (attempt + 1))
+    raise last
+
+
+def parse_feed(xml_bytes):
+    """Namespace-agnostic RSS/Atom parser -> list of headline dicts, newest first."""
+    root = ET.fromstring(xml_bytes)
     items, seen = [], set()
-    for item in root.iter("item"):
-        raw = (item.findtext("title") or "").strip()
-        title, _, source = raw.rpartition(" - ")
-        title = title or raw
+
+    def child(el, name):
+        for c in el:
+            if c.tag.split("}")[-1].lower() == name:
+                return c
+        return None
+
+    for el in root.iter():
+        if el.tag.split("}")[-1] not in ("item", "entry"):
+            continue
+        node = child(el, "title")
+        raw = ((node.text if node is not None else "") or "").strip()
+        title, sep, source = raw.rpartition(" - ")
+        if not sep:
+            title, source = raw, ""
+        src = child(el, "source")
+        if src is not None and (src.text or "").strip():
+            source = src.text.strip()
         k = key(title)
         if not title or k in seen:
             continue
         seen.add(k)
+        link = child(el, "link")
+        link = ((link.text or link.get("href") or "") if link is not None else "").strip()
+        when = next((n for n in (child(el, "pubdate"), child(el, "published"), child(el, "updated"))
+                     if n is not None), None)
         try:
-            published = parsedate_to_datetime(item.findtext("pubDate"))
+            published = parsedate_to_datetime(when.text) if when is not None else None
         except Exception:
-            published = datetime.now(timezone.utc)
-        items.append({"title": title, "source": source or "news", "link": item.findtext("link") or "",
+            published = None
+        if published is None:
+            try:
+                published = datetime.fromisoformat(when.text.replace("Z", "+00:00"))
+            except Exception:
+                published = datetime.now(timezone.utc)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        items.append({"title": title, "source": source or "news", "link": link,
                       "published": published, "key": k})
     items.sort(key=lambda i: i["published"], reverse=True)
     return items
+
+
+def fetch_headlines(topic, days=2):
+    """Google News, then Bing News, then gaming-site feeds filtered by topic keywords."""
+    query = topic["query"]
+    keywords = [k.lower() for k in topic.get("keywords", [topic["name"]])]
+    sources = [
+        ("Google News", "https://news.google.com/rss/search?" + urllib.parse.urlencode(
+            {"q": f"{query} when:{days}d", "hl": "en-US", "gl": "US", "ceid": "US:en"}), False),
+        ("Bing News", "https://www.bing.com/news/search?" + urllib.parse.urlencode(
+            {"q": query.replace('"', ""), "format": "rss"}), False),
+    ] + [(url.split("/")[2], url, True) for url in SITE_FEEDS]
+    found, errors = [], []
+    for label, url, filter_by_keyword in sources:
+        try:
+            items = parse_feed(http_get(url, tries=2 if label == "Google News" else 1))
+        except Exception as err:
+            errors.append(f"{label}: {err}")
+            continue
+        if filter_by_keyword:
+            items = [i for i in items if any(k in i["title"].lower() for k in keywords)]
+        found += items
+        if len(found) >= 8:
+            break
+    if not found and errors:
+        raise RuntimeError("; ".join(errors))
+    seen, unique = set(), []
+    for i in sorted(found, key=lambda i: i["published"], reverse=True):
+        if i["key"] not in seen:
+            seen.add(i["key"])
+            unique.append(i)
+    return unique
 
 
 def demo_headlines(name):
@@ -117,7 +188,7 @@ def pick_topic(config, state, demo):
     need = config.get("headlinesPerVideo", 4)
     for topic in order:
         try:
-            items = demo_headlines(topic["name"]) if demo else fetch_headlines(topic["query"])
+            items = demo_headlines(topic["name"]) if demo else fetch_headlines(topic)
         except Exception as err:
             print(f"  could not fetch {topic['name']}: {err}")
             continue
