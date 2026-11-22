@@ -49,7 +49,9 @@ def list_models(kind, fallback):
                 continue
             names.append(name)
         # newest first, "lite" variants last (cheaper but weaker)
-        names.sort(key=lambda n: ("lite" in n, [-int(x) for x in re.findall(r"\d+", n)]))
+        # stable, numbered models first; "latest", preview/experimental and "lite" variants last
+        names.sort(key=lambda n: (any(x in n for x in ("preview", "omni", "exp")), "latest" in n,
+                                  "lite" in n, [-int(x) for x in re.findall(r"\d+", n)]))
         print(f"  Gemini {kind} models available: {', '.join(names[:5]) or 'none'}")
         return names or fallback
     except Exception as err:
