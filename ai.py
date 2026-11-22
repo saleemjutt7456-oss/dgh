@@ -52,6 +52,8 @@ def list_models(kind, fallback):
         # stable, numbered models first; "latest", preview/experimental and "lite" variants last
         names.sort(key=lambda n: (any(x in n for x in ("preview", "omni", "exp")), "latest" in n,
                                   "lite" in n, [-int(x) for x in re.findall(r"\d+", n)]))
+        # models named in config.json go first: the newest ones are often overloaded or rate limited
+        names = [n for n in fallback if n in names] + [n for n in names if n not in fallback]
         print(f"  Gemini {kind} models available: {', '.join(names[:5]) or 'none'}")
         return names or fallback
     except Exception as err:
