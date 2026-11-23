@@ -72,6 +72,6 @@ jobs:
           git add -A data uploaded queue
           if ! git diff --cached --quiet; then
             git commit -m "Update upload history"
-            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" || { git rebase --abort; git pull --no-rebase -X ours origin "${GITHUB_REF_NAME}"; }
             git push
           fi
