@@ -14,6 +14,7 @@ import urllib.request
 import wave
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta"
+DEAD_MODELS = set()  # models that answered 404 this run: not tried again
 
 
 def _request(url, payload=None, headers=None, timeout=90):
@@ -25,7 +26,12 @@ def _request(url, payload=None, headers=None, timeout=90):
 
 
 def _gemini(path, payload=None):
-    return _request(f"{GEMINI}/{path}", payload, {"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+    try:
+        return _request(f"{GEMINI}/{path}", payload, {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, timeout=45)
+    except urllib.error.HTTPError as err:
+        if err.code == 404 and path.startswith("models/"):
+            DEAD_MODELS.add(path.split("/")[1].split(":")[0])
+        raise
 
 
 def list_models(kind, fallback):
@@ -54,6 +60,7 @@ def list_models(kind, fallback):
                                   "lite" in n, [-int(x) for x in re.findall(r"\d+", n)]))
         # models named in config.json go first: the newest ones are often overloaded or rate limited
         names = [n for n in fallback if n in names] + [n for n in names if n not in fallback]
+        names = [n for n in names if n not in DEAD_MODELS]
         print(f"  Gemini {kind} models available: {', '.join(names[:5]) or 'none'}")
         return names or fallback
     except Exception as err:
