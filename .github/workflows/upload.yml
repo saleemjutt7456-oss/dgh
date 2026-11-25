@@ -36,7 +36,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Install ffmpeg
-        run: sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+        run: for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --fix-missing ffmpeg fonts-dejavu-core && break; sleep 10; done; command -v ffmpeg
 
       - name: Find topic and create video
         env:
