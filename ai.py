@@ -6,6 +6,7 @@ Keys come from environment variables (GitHub secrets): GEMINI_API_KEY, PIXABAY_A
 import base64
 import json
 import os
+import random
 import re
 import time
 import urllib.error
@@ -14,6 +15,26 @@ import urllib.request
 import wave
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta"
+SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "seen_media.json")
+
+
+def _seen():
+    """Stock clip/photo ids used in earlier runs, so the same top search hit is not reused every day."""
+    try:
+        return set(json.load(open(SEEN_FILE)))
+    except Exception:
+        return set()
+
+
+def _remember(key):
+    try:
+        ids = list(_seen() | {key})[-400:]
+        os.makedirs(os.path.dirname(SEEN_FILE), exist_ok=True)
+        json.dump(ids, open(SEEN_FILE, "w"))
+    except Exception:
+        pass
+
+
 DEAD_MODELS = set()  # models that answered 404 this run: not tried again
 
 
@@ -179,6 +200,9 @@ def pixabay_clip(query, dest, used):
         url = "https://pixabay.com/api/videos/?" + urllib.parse.urlencode(
             {"key": key, "q": query[:100], "per_page": 30, "safesearch": "true", "order": "popular"})
         hits = _request(url, headers={"User-Agent": "Mozilla/5.0"}).get("hits", [])
+        old = _seen()
+        random.shuffle(hits)  # not always the most popular clip: videos must differ from each other
+        hits.sort(key=lambda h: f"v{h['id']}" in old)  # clips not used before come first
         for hit in hits:
             if hit["id"] in used or hit.get("duration", 0) < 4:
                 continue
@@ -190,6 +214,7 @@ def pixabay_clip(query, dest, used):
             with urllib.request.urlopen(req, timeout=180) as resp, open(dest, "wb") as fh:
                 fh.write(resp.read())
             used.add(hit["id"])
+            _remember(f"v{hit['id']}")
             return dest
     except Exception as err:
         print(f"  Pixabay '{query}' failed: {err}")
